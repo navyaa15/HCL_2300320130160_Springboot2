@@ -1,0 +1,17 @@
+package com.hcl.hclassessment2.Service;
+
+import com.hcl.hclassessment2.Entity.*; import com.hcl.hclassessment2.Repository.*; import org.springframework.stereotype.Service; import org.springframework.transaction.annotation.Transactional; import org.springframework.http.HttpStatus; import org.springframework.web.server.ResponseStatusException; import java.math.BigDecimal; import java.util.*;
+
+@Service public class CartService {
+private final CartRepository carts; private final CartItemRepository items; private final CustomerRepository customers; private final ProductRepository products;
+public CartService(CartRepository carts,CartItemRepository items,CustomerRepository customers,ProductRepository products){this.carts=carts;this.items=items;this.customers=customers;this.products=products;}
+private Cart cart(Long customerId){Customer c=customers.findById(customerId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Customer not found"));return carts.findByCustomerId(customerId).orElseGet(()->{Cart cart=new Cart();cart.setCustomer(c);return carts.save(cart);});}
+private Product product(Long id){return products.findById(id).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Product not found"));}
+private void validate(Product p,int qty){if(qty<1)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Quantity must be positive");if(qty>p.getQuantity())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Insufficient stock");}
+@Transactional public CartResponse add(Long customerId,Long productId,int quantity){Product p=product(productId);Cart c=cart(customerId);CartItem item=items.findByCartIdAndProductId(c.getId(),productId).orElse(null);int total=quantity+(item==null?0:item.getQuantity());validate(p,total);if(item==null){item=new CartItem();item.setCart(c);item.setProduct(p);}item.setQuantity(total);item.setPrice(p.getPrice());items.save(item);return response(c);}
+@Transactional(readOnly=true) public CartResponse view(Long customerId){if(!customers.existsById(customerId))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Customer not found");return carts.findByCustomerId(customerId).map(this::response).orElse(new CartResponse(null,customerId,List.of(),BigDecimal.ZERO));}
+private CartResponse response(Cart c){List<CartResponse.Item> lines=items.findByCartId(c.getId()).stream().map(i->new CartResponse.Item(i.getId(),i.getProduct().getId(),i.getProduct().getName(),i.getQuantity(),i.getPrice(),i.getPrice().multiply(BigDecimal.valueOf(i.getQuantity())))).toList();BigDecimal total=lines.stream().map(CartResponse.Item::subtotal).reduce(BigDecimal.ZERO,BigDecimal::add);return new CartResponse(c.getId(),c.getCustomer().getId(),lines,total);}
+@Transactional public CartResponse update(Long itemId,int quantity){CartItem i=items.findById(itemId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Cart item not found"));Product p=product(i.getProduct().getId());validate(p,quantity);i.setQuantity(quantity);i.setPrice(p.getPrice());items.save(i);return response(i.getCart());}
+@Transactional public void remove(Long itemId){CartItem i=items.findById(itemId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Cart item not found"));items.delete(i);}
+@Transactional public void clear(Long customerId){if(!customers.existsById(customerId))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Customer not found");carts.findByCustomerId(customerId).ifPresent(c->items.deleteAll(items.findByCartId(c.getId())));}
+}
